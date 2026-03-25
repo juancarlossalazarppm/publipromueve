@@ -12,9 +12,12 @@ on:
 permissions:
   issues: write
   pull-requests: write
-  contents: write
+  contents: read
 
 jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Detectar stack
+  # ─────────────────────────────────────────────
   detect_stack:
     runs-on: ubuntu-latest
     outputs:
@@ -30,7 +33,6 @@ jobs:
             echo "stack=$INPUT" >> $GITHUB_OUTPUT
             exit 0
           fi
-          # Auto-detección por archivos del repo
           if ls *.sln 2>/dev/null || find . -name "*.csproj" | head -1 | grep -q .; then
             echo "stack=dotnet" >> $GITHUB_OUTPUT
           elif [ -f "composer.json" ]; then
@@ -45,68 +47,83 @@ jobs:
             echo "stack=generic" >> $GITHUB_OUTPUT
           fi
 
-  pr_agent:
+  # ─────────────────────────────────────────────
+  # Job 2: Review con contexto completo
+  # Se ejecuta al abrir/actualizar un PR
+  # ─────────────────────────────────────────────
+  ai_review:
     needs: detect_stack
-    if: ${{ github.event.sender.type != 'Bot' }}
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.sender.type != 'Bot'
     runs-on: ubuntu-latest
     name: AI Code Review (${{ needs.detect_stack.outputs.stack }})
     steps:
-      - name: Build stack-specific instructions
-        id: instructions
-        run: |
-          STACK="${{ needs.detect_stack.outputs.stack }}"
-          case "$STACK" in
-            dotnet)
-              REVIEW_INSTRUCTIONS="Revisa siguiendo Clean Architecture con .NET 8. Valida: uso correcto de MediatR (CQRS), Autofac modules, EF Core (read/write separation), MassTransit para eventos de integración, y Ardalis.Specification para queries. Consulta CLAUDE.md para contexto de arquitectura."
-              IMPROVE_INSTRUCTIONS="Sugiere mejoras alineadas con .NET 8 best practices, Clean Architecture y CQRS. Prioriza: bugs, seguridad, rendimiento, mantenibilidad."
-              ;;
-            laravel)
-              REVIEW_INSTRUCTIONS="Revisa siguiendo las best practices de Laravel 11. Valida: Eloquent, middleware, Form Requests, Service pattern, y políticas de autorización. Consulta CLAUDE.md para contexto."
-              IMPROVE_INSTRUCTIONS="Sugiere mejoras alineadas con Laravel 11 best practices. Prioriza: bugs, seguridad, rendimiento."
-              ;;
-            node)
-              REVIEW_INSTRUCTIONS="Revisa siguiendo best practices de Node.js/TypeScript. Valida: manejo de errores async, tipos correctos, y patrones del proyecto. Consulta CLAUDE.md."
-              IMPROVE_INSTRUCTIONS="Sugiere mejoras para Node.js/TypeScript. Prioriza: type safety, async correctness, seguridad."
-              ;;
-            *)
-              REVIEW_INSTRUCTIONS="Revisa el código priorizando seguridad, rendimiento y mantenibilidad. Consulta CLAUDE.md para contexto de arquitectura."
-              IMPROVE_INSTRUCTIONS="Sugiere mejoras priorizando bugs, seguridad, rendimiento y mantenibilidad."
-              ;;
-          esac
-          echo "review=$REVIEW_INSTRUCTIONS" >> $GITHUB_OUTPUT
-          echo "improve=$IMPROVE_INSTRUCTIONS" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v4
 
-      - name: PR Agent
-        uses: Codium-ai/pr-agent@v0.32
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install anthropic PyGithub requests
+
+      - name: Download review script
+        run: |
+          curl -sf \
+            https://raw.githubusercontent.com/juancarlossalazarppm/publipromueve/main/.github/scripts/ai_review.py \
+            -o /tmp/ai_review.py
+
+      - name: Run AI review
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          config.response_language: "es"
-          config.model: "anthropic/claude-sonnet-4-5-20250929"
-          config.model_turbo: "anthropic/claude-haiku-4-5-20251001"
-          config.fallback_models: '["anthropic/claude-sonnet-4-5-20250929"]'
-          github_action_config.auto_review: "true"
-          github_action_config.auto_describe: "true"
-          github_action_config.auto_improve: "true"
-          pr_description.publish_description_as_comment: "true"
-          pr_description.generate_ai_title: "true"
-          pr_description.enable_pr_type: "true"
-          pr_description.enable_semantic_files_types: "true"
-          pr_description.enable_pr_diagram: "true"
-          pr_description.collapsible_file_list: "adaptive"
-          pr_description.add_original_user_description: "true"
-          pr_description.publish_labels: "true"
-          pr_description.enable_large_pr_handling: "true"
-          pr_reviewer.require_focused_review: "true"
-          pr_reviewer.require_score_review: "true"
-          pr_reviewer.require_estimate_effort_to_review: "true"
-          pr_reviewer.extra_instructions: ${{ steps.instructions.outputs.review }}
-          pr_code_suggestions.commitable_code_suggestions: "true"
-          pr_code_suggestions.dual_publishing_score_threshold: "5"
-          pr_code_suggestions.num_code_suggestions_per_chunk: "4"
-          pr_code_suggestions.max_number_of_calls: "3"
-          pr_code_suggestions.focus_only_on_problems: "true"
-          pr_code_suggestions.persistent_comment: "true"
-          pr_code_suggestions.suggestions_score_threshold: "3"
-          pr_code_suggestions.extra_instructions: ${{ steps.instructions.outputs.improve }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STACK: ${{ needs.detect_stack.outputs.stack }}
+          REPO_NAME: ${{ github.repository }}
+          REPO_SLUG: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python /tmp/ai_review.py
+
+  # ─────────────────────────────────────────────
+  # Job 3: Acumular aprendizajes al mergear PR
+  # ─────────────────────────────────────────────
+  accumulate_learning:
+    needs: detect_stack
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    name: Accumulate Learnings
+    steps:
+      - name: Checkout publipromueve
+        uses: actions/checkout@v4
+        with:
+          repository: juancarlossalazarppm/publipromueve
+          token: ${{ secrets.PUBLIPROMUEVE_PAT }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install anthropic PyGithub
+
+      - name: Run accumulate learning script
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
+          REPO_SLUG: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python .github/scripts/accumulate_learning.py
+
+      - name: Commit learnings to publipromueve
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "projects/${{ github.event.repository.name }}.md"
+          git diff --cached --quiet || git commit -m "chore: learnings from ${{ github.repository }}#${{ github.event.pull_request.number }}"
+          git push
