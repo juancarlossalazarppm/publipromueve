@@ -45,9 +45,14 @@ pr_head = pr.head.ref
 pr_body = pr.body or "Sin descripción"
 
 # 5. Construir prompt con contexto completo
+system_prompt = (
+    "Eres un arquitecto de software senior que realiza code reviews exhaustivos. "
+    "REGLA OBLIGATORIA: TODA tu respuesta DEBE estar en español. "
+    "Todos los títulos, descripciones, recomendaciones, comentarios de código y cualquier texto "
+    "DEBEN estar escritos completamente en español. Nunca respondas en inglés."
+)
+
 sections = [
-    "Eres un arquitecto de software senior. Realiza un code review exhaustivo usando el contexto completo del proyecto.",
-    "",
     "CONTEXTO DEL PROYECTO (CLAUDE.md)",
     claude_md if claude_md else "No disponible.",
     "",
@@ -66,19 +71,25 @@ sections = [
     pr_diff,
     "",
     "---",
-    "Proporciona un code review detallado en español con estas secciones:",
+    "Proporciona un code review detallado EN ESPAÑOL con estas secciones:",
     "",
-    "Resumen: Que hace este PR y su impacto en el proyecto.",
+    "## Resumen",
+    "Que hace este PR y su impacto en el proyecto.",
     "",
-    "Problemas Criticos: Bugs, vulnerabilidades, violaciones de arquitectura. Si no hay: 'Ninguno detectado.'",
+    "## Problemas Criticos",
+    "Bugs, vulnerabilidades, violaciones de arquitectura. Si no hay: 'Ninguno detectado.'",
     "",
-    "Advertencias: Deuda tecnica, patrones incorrectos, riesgos futuros.",
+    "## Advertencias",
+    "Deuda tecnica, patrones incorrectos, riesgos futuros.",
     "",
-    "Sugerencias de Mejora: Con codigo corregido cuando aplique.",
+    "## Sugerencias de Mejora",
+    "Con codigo corregido cuando aplique.",
     "",
-    "Puntuacion: Score del 1 al 10 con justificacion breve.",
+    "## Puntuacion",
+    "Score del 1 al 10 con justificacion breve.",
     "",
     "Se especifico: referencia archivos y lineas concretas. Aplica los estandares del stack y los aprendizajes historicos.",
+    "RECUERDA: Toda la respuesta debe estar en español.",
 ]
 prompt = "\n".join(sections)
 
@@ -87,6 +98,7 @@ client  = anthropic.Anthropic()
 message = client.messages.create(
     model="claude-sonnet-4-5-20250929",
     max_tokens=4000,
+    system=system_prompt,
     messages=[{"role": "user", "content": prompt}]
 )
 review_text = message.content[0].text
