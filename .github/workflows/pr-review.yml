@@ -8,6 +8,13 @@ on:
         required: false
         type: string
         default: 'auto'
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: 'API key de Anthropic para Claude'
+        required: true
+      PUBLIPROMUEVE_PAT:
+        description: 'PAT para acceder al repo publipromueve (para accumulate learning)'
+        required: false
 
 permissions:
   issues: write
