@@ -3,9 +3,17 @@ AI Code Review con contexto completo.
 Carga: CLAUDE.md del repo + instrucciones del stack + historial del proyecto.
 """
 import os
+import sys
 import requests
 import anthropic
-from github import Github
+from github import Github, Auth
+
+# Validar que las variables requeridas existan
+for var in ["ANTHROPIC_API_KEY", "GITHUB_TOKEN", "STACK", "REPO_NAME", "REPO_SLUG", "PR_NUMBER"]:
+    if not os.environ.get(var):
+        print(f"ERROR: Variable de entorno '{var}' no está configurada.")
+        print(f"Verifica que el secret '{var}' exista en Settings → Secrets and variables → Actions")
+        sys.exit(1)
 
 stack     = os.environ["STACK"]
 repo_name = os.environ["REPO_NAME"]
@@ -28,7 +36,7 @@ r = requests.get(f"{base_url}/projects/{repo_slug}.md")
 project_history = r.text[:3000] if r.status_code == 200 else "Sin historial previo de este proyecto."
 
 # 4. PR diff y metadata desde GitHub API
-gh   = Github(os.environ["GITHUB_TOKEN"])
+gh   = Github(auth=Auth.Token(os.environ["GITHUB_TOKEN"]))
 repo = gh.get_repo(repo_name)
 pr   = repo.get_pull(pr_number)
 
